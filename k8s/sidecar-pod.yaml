@@ -1,0 +1,81 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: mcp-browser-sidecar
+  namespace: sidecar-namespace
+  labels:
+    app: mcp-browser-sidecar
+spec:
+  securityContext:
+    runAsNonRoot: true
+  volumes:
+  - name: shared-sessions
+    emptyDir: {}
+  containers:
+  - name: mcp-server
+    image: node:20
+    ports:
+    - containerPort: 3001
+      protocol: TCP
+    volumeMounts:
+    - name: shared-sessions
+      mountPath: /shared/sessions
+    securityContext:
+      runAsNonRoot: true
+      runAsUser: 1000
+      allowPrivilegeEscalation: false
+    resources:
+      requests:
+        memory: "256Mi"
+      limits:
+        memory: "512Mi"
+    livenessProbe:
+      httpGet:
+        path: /health
+        port: 3001
+        scheme: HTTP
+      initialDelaySeconds: 10
+      periodSeconds: 15
+      timeoutSeconds: 5
+      failureThreshold: 3
+    readinessProbe:
+      httpGet:
+        path: /ready
+        port: 3001
+        scheme: HTTP
+      initialDelaySeconds: 5
+      periodSeconds: 10
+      timeoutSeconds: 3
+      failureThreshold: 3
+  - name: browser
+    image: playwright/base:latest
+    volumeMounts:
+    - name: shared-sessions
+      mountPath: /shared/sessions
+    securityContext:
+      runAsNonRoot: true
+      runAsUser: 1000
+      allowPrivilegeEscalation: false
+    resources:
+      requests:
+        memory: "1Gi"
+      limits:
+        memory: "2Gi"
+    livenessProbe:
+      exec:
+        command:
+        - sh
+        - -lc
+        - "echo healthy"
+      initialDelaySeconds: 15
+      periodSeconds: 20
+      timeoutSeconds: 5
+    readinessProbe:
+      exec:
+        command:
+        - sh
+        - -lc
+        - "echo ready"
+      initialDelaySeconds: 5
+      periodSeconds: 10
+      timeoutSeconds: 3

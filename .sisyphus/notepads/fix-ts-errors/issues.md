@@ -1,0 +1,8 @@
+- TS errors identified:
+- 'page' is possibly undefined at src/handlers/index.ts:340.
+- 'localStorage' inside evaluate callback is treated as a type, not a value at src/handlers/index.ts:342.
+- 'DEFAULT_CONFIG' declared but never used at src/server.ts:11.
+- Fix plan:
+- Guard usage of 'page' with if (page) before evaluating/using it.
+- Use window.localStorage within page.evaluate callback and keep external localStorage reference for data transfer.
+- Remove DEFAULT_CONFIG from imports.
