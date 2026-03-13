@@ -39,3 +39,6 @@ sessions/
 # Temporary files
 tmp/
 temp/
+
+# Sisyphus internal files
+.sisyphus/

@@ -10,7 +10,8 @@
     "dev": "ts-node src/index.ts",
     "test": "jest",
     "lint": "eslint src --ext .ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
   },
   "keywords": [
     "browser",
@@ -18,12 +19,32 @@
     "sidecar",
     "kubernetes",
     "playwright",
-    "openclaw"
+    "openclaw",
+    "puppeteer",
+    "browser-automation",
+    "session-management",
+    "web-scraping"
   ],
   "author": "oh-agent",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/oh-agent/browser-sidecar.git"
+  },
+  "bugs": {
+    "url": "https://github.com/oh-agent/browser-sidecar/issues"
+  },
+  "homepage": "https://github.com/oh-agent/browser-sidecar#readme",
   "engines": {
     "node": ">=20.0.0"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
   },
   "dependencies": {
     "pino": "^8.17.0",

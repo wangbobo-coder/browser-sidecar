@@ -1,0 +1,41 @@
+# Source files
+src/
+tests/
+
+# Configuration
+tsconfig.json
+jest.config.js
+eslint.config.js
+
+# Development
+node_modules/
+.sisyphus/
+
+# Build artifacts
+*.tsbuildinfo
+
+# Docker
+docker/
+
+# Kubernetes
+k8s/
+
+# Logs
+logs/
+*.log
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDE
+.idea/
+.vscode/
+
+# Test coverage
+coverage/
+
+# OS files
+.DS_Store
+Thumbs.db
