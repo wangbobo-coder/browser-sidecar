@@ -29,12 +29,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/oh-agent/browser-sidecar.git"
+    "url": "git+https://github.com/wangbobo-coder/browser-sidecar.git"
   },
   "bugs": {
-    "url": "https://github.com/oh-agent/browser-sidecar/issues"
+    "url": "https://github.com/wangbobo-coder/browser-sidecar/issues"
   },
-  "homepage": "https://github.com/oh-agent/browser-sidecar#readme",
+  "homepage": "https://github.com/wangbobo-coder/browser-sidecar#readme",
   "engines": {
     "node": ">=20.0.0"
   },
