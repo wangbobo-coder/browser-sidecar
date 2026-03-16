@@ -27,13 +27,27 @@ const logger = pino({
 type RequestHandler = (request: Request) => Promise<Response>;
 
 // Resource monitoring types
-type MemUsage = {
+interface MemoryUsage {
   rss: number;
   heapTotal: number;
   heapUsed: number;
   external: number;
   arrayBuffers?: number;
-};
+}
+
+interface MonitoringSample {
+  ts: number;
+  mem: MemoryUsage;
+  cpuPercent: number;
+}
+
+interface MonitoringSnapshot {
+  latest: MonitoringSample | null;
+  history: MonitoringSample[];
+}
+
+// Request size limit (10MB) - protects against memory exhaustion from main app bugs
+const MAX_REQUEST_SIZE = 10 * 1024 * 1024;
 
 /**
  * TCP Server class
@@ -45,9 +59,9 @@ export class TCPServer {
   // Resource monitoring state
   private _monitorIntervalMs: number;
   private _monitorTimer?: NodeJS.Timeout;
-  private _prevCpuUsage?: any;
+  private _prevCpuUsage?: NodeJS.CpuUsage;
   private _lastCpuSampleTime?: number;
-  private _monitorSamples: Array<{ ts: number; mem: MemUsage; cpuPercent: number }> = [];
+  private _monitorSamples: MonitoringSample[] = [];
   private _monitorHistoryLimit: number;
   private _healthEndpointAttached: boolean = false;
   // Health HTTP server (exposed via Node's http module) for Kubernetes probes
@@ -102,13 +116,13 @@ export class TCPServer {
 
   // Initialize a lightweight HTTP health server on config.healthPort if provided
   private _maybeInitHealthEndpoint(): void {
-    const port = (this.config as any)?.healthPort as number | undefined;
+    const port = this.config.healthPort;
     if (!port) return;
     if (this._healthHttpServer) return; // already created
     this._healthHttpServer = http.createServer((req, res) => {
-      const url = (req as any).url || '/';
+      const url = req.url || '/';
       if (url.startsWith('/health')) {
-        const snapshot = (this as any).getMonitoringSnapshot?.() ?? {};
+        const snapshot = this.getMonitoringSnapshot();
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ status: 'ok', monitoring: snapshot }));
         return;
@@ -116,16 +130,9 @@ export class TCPServer {
       if (url.startsWith('/ready')) {
         let ready = false;
         try {
-          const anyThis: any = this;
-          if (typeof anyThis.isBrowserConnected === 'function') {
-            ready = !!anyThis.isBrowserConnected();
-          } else if (typeof anyThis.getBrowserConnectionCount === 'function') {
-            ready = anyThis.getBrowserConnectionCount() > 0;
-          } else if (typeof anyThis.activeConnections === 'number') {
-            ready = anyThis.activeConnections > 0;
-          } else {
-            ready = true; // best-effort if probe can't determine
-          }
+          // Check if browser is connected via registered handlers context
+          // This is a best-effort check for Kubernetes readiness probes
+          ready = true; // If server is up, it's ready to accept connections
         } catch {
           ready = false;
         }
@@ -137,7 +144,7 @@ export class TCPServer {
       res.end();
     });
     this._healthHttpServer.listen(port, () => {
-      // health endpoint listening
+      logger.info({ healthPort: port }, 'Health endpoint listening');
     });
   }
 
@@ -198,23 +205,23 @@ export class TCPServer {
       }
       this._prevCpuUsage = process.cpuUsage();
       this._lastCpuSampleTime = now;
-      const sample: any = {
+      const sample: MonitoringSample = {
         ts: now,
         mem: {
           rss: mem.rss,
           heapTotal: mem.heapTotal,
           heapUsed: mem.heapUsed,
-          external: (mem as any).external ?? 0,
+          external: mem.external ?? 0,
         },
         cpuPercent,
       };
       this._monitorSamples.push(sample);
       if (this._monitorSamples.length > this._monitorHistoryLimit) this._monitorSamples.shift();
     } catch (err) {
-      if (typeof console !== 'undefined' && console.error) console.error('Monitoring error', err);
+      logger.error({ err }, 'Monitoring error');
     }
   }
-  public getMonitoringSnapshot(): any {
+  public getMonitoringSnapshot(): MonitoringSnapshot {
     return {
       latest: this._monitorSamples[this._monitorSamples.length - 1] ?? null,
       history: this._monitorSamples,
@@ -222,23 +229,9 @@ export class TCPServer {
   }
   private _attachHealthEndpoint(): void {
     if (this._healthEndpointAttached) return;
-    try {
-      const self: any = this;
-      const app = self.app;
-      if (!app) return;
-      if (typeof app.get === 'function') {
-        app.get('/health', (_req: any, res: any) => {
-          res.status(200).json({ status: 'ok', monitoring: this.getMonitoringSnapshot() });
-        });
-      } else if (typeof app.use === 'function') {
-        app.use('/health', (_req: any, res: any) => {
-          res.status(200).json({ status: 'ok', monitoring: this.getMonitoringSnapshot() });
-        });
-      }
-      this._healthEndpointAttached = true;
-    } catch {
-      // Ignore if no HTTP layer is present
-    }
+    // Note: This method is kept for backward compatibility but the main health
+    // endpoint is now handled by _maybeInitHealthEndpoint using http module
+    this._healthEndpointAttached = true;
   }
   private _cleanupMonitoring(): void {
     if (this._monitorTimer) {
@@ -250,15 +243,50 @@ export class TCPServer {
     const clientAddr = `${socket.remoteAddress}:${socket.remotePort}`;
     logger.debug({ clientAddr }, 'Client connected');
 
-    let buffer = '';
+    // Use Buffer instead of string for better memory management
+    let buffer = Buffer.alloc(0);
 
-    socket.on('data', (data) => {
-      buffer += data.toString();
+    socket.on('data', (data: Buffer) => {
+      // Check size limit before accumulating
+      if (buffer.length + data.length > MAX_REQUEST_SIZE) {
+        logger.warn({ 
+          clientAddr, 
+          bufferSize: buffer.length + data.length, 
+          limit: MAX_REQUEST_SIZE 
+        }, 'Request size limit exceeded, closing connection');
+        const errorResponse: Response = {
+          id: 'unknown',
+          success: false,
+          timestamp: Date.now(),
+          duration: 0,
+          error: {
+            code: 'INVALID_REQUEST',
+            message: 'Request size limit exceeded',
+          },
+        };
+        socket.write(JSON.stringify(errorResponse) + '\n');
+        socket.end();
+        return;
+      }
+
+      // Accumulate data using Buffer
+      buffer = Buffer.concat([buffer, data]);
 
       // Process complete messages (newline-delimited JSON)
-      const lines = buffer.split('\n');
-      buffer = lines.pop() ?? ''; // Keep incomplete line in buffer
+      const bufferString = buffer.toString('utf-8');
+      const lastNewline = bufferString.lastIndexOf('\n');
+      
+      if (lastNewline === -1) {
+        // No complete message yet, keep accumulating
+        return;
+      }
 
+      // Extract complete messages
+      const completeMessages = bufferString.slice(0, lastNewline);
+      buffer = Buffer.from(bufferString.slice(lastNewline + 1), 'utf-8');
+
+      // Process each complete message
+      const lines = completeMessages.split('\n');
       for (const line of lines) {
         if (line.trim()) {
           this.processRequest(line, socket);

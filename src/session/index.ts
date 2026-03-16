@@ -13,18 +13,53 @@ import type { SessionData, ServerConfig } from '../types.js';
 
 const logger = pino({ name: 'session-manager' });
 
+// PBKDF2 configuration for secure key derivation
+const PBKDF2_ITERATIONS = 100000;
+const PBKDF2_KEY_LENGTH = 32; // 256 bits for AES-256
+const PBKDF2_SALT = Buffer.from('browser-sidecar-session-key-salt', 'utf-8');
+
+// Cache configuration
+const CACHE_TTL_MS = 60000; // 1 minute cache TTL
+
+interface CachedSession {
+  data: { cookies: Array<{ name: string; value: string; domain: string; path: string }>; localStorage?: Record<string, string> };
+  timestamp: number;
+}
+
 /**
  * Session Manager class
  */
 export class SessionManager {
   private storagePath: string;
   private encryptionKey: Buffer;
+  // Memory cache for session data
+  private sessionCache: Map<string, CachedSession> = new Map();
 
   constructor(config: ServerConfig) {
     this.storagePath = config.sessionStoragePath;
-    // Derive 32-byte key from config or environment
-    const keySource = config.encryptionKey ?? process.env.SESSION_ENCRYPTION_KEY ?? 'default-key';
-    this.encryptionKey = crypto.createHash('sha256').update(keySource).digest();
+    
+    // Get encryption key source from config or environment
+    const keySource = config.encryptionKey ?? process.env.SESSION_ENCRYPTION_KEY;
+    
+    // Warn if no encryption key is configured
+    if (!keySource) {
+      logger.warn(
+        '⚠️  No SESSION_ENCRYPTION_KEY configured! Using insecure default key. ' +
+        'Set SESSION_ENCRYPTION_KEY environment variable or encryptionKey in config for production.'
+      );
+    }
+    
+    // Derive 32-byte key using PBKDF2 for secure key derivation
+    const actualKeySource = keySource ?? 'insecure-default-key-for-development-only';
+    this.encryptionKey = crypto.pbkdf2Sync(
+      actualKeySource,
+      PBKDF2_SALT,
+      PBKDF2_ITERATIONS,
+      PBKDF2_KEY_LENGTH,
+      'sha256'
+    );
+    
+    logger.info('Session manager initialized with PBKDF2 key derivation');
   }
 
   /**
@@ -49,6 +84,9 @@ export class SessionManager {
     localStorage?: Record<string, string>,
     domain?: string
   ): Promise<SessionData> {
+    // Invalidate cache on save
+    this.sessionCache.delete(profileName);
+
     const sessionData: SessionData = {
       id: crypto.randomUUID(),
       profileName,
@@ -77,6 +115,17 @@ export class SessionManager {
     cookies: Array<{ name: string; value: string; domain: string; path: string }>;
     localStorage?: Record<string, string>;
   }> {
+    // Check cache first
+    const cached = this.sessionCache.get(profileName);
+    if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+      if (process.env.LOG_LEVEL === 'debug' || process.env.NODE_ENV === 'development') {
+        logger.debug({ profileName, cacheHit: true }, 'Session restored from cache');
+      } else {
+        logger.info({ profileName, cacheHit: true }, 'Session restored from cache');
+      }
+      return cached.data;
+    }
+
     const filePath = this.getSessionFilePath(profileName);
     
     try {
@@ -86,6 +135,8 @@ export class SessionManager {
       // Check expiration
       if (sessionData.expiresAt < Date.now()) {
         await fs.unlink(filePath);
+        // Also clear from cache if present
+        this.sessionCache.delete(profileName);
         throw new Error('Session expired');
       }
 
@@ -101,12 +152,19 @@ export class SessionManager {
         localStorage = JSON.parse(this.decrypt(sessionData.localStorage)) as Record<string, string>;
       }
 
+      // Cache the result
+      const sessionResult = { cookies, localStorage };
+      this.sessionCache.set(profileName, {
+        data: sessionResult,
+        timestamp: Date.now(),
+      });
+
       if (process.env.LOG_LEVEL === 'debug' || process.env.NODE_ENV === 'development') {
         logger.debug({ profileName, filePath }, 'Session restored');
       } else {
         logger.info({ profileName }, 'Session restored');
       }
-      return { cookies, localStorage };
+      return sessionResult;
     } catch (err) {
       logger.error({ err, profileName }, 'Failed to restore session');
       throw err;
@@ -130,6 +188,9 @@ export class SessionManager {
    * Delete session
    */
   async deleteSession(profileName: string): Promise<void> {
+    // Clear from cache
+    this.sessionCache.delete(profileName);
+    
     const filePath = this.getSessionFilePath(profileName);
     try {
       await fs.unlink(filePath);
@@ -139,7 +200,7 @@ export class SessionManager {
         logger.info({ profileName }, 'Session deleted');
       }
     } catch (err) {
-      const e = err as any;
+      const e = err as { code?: string };
       // If the file doesn't exist, treat as a successful delete
       if (e?.code === 'ENOENT') {
         return;

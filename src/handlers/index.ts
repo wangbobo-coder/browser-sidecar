@@ -19,6 +19,7 @@ import type {
   GetStateRequest,
   CloseRequest,
   ErrorCode,
+  BaseRequest,
 } from '../types.js';
 import pino from 'pino';
 
@@ -32,34 +33,67 @@ export interface HandlerContext {
   sessionManager: SessionManager;
 }
 
+// ============================================================================
+// Response Utility Functions - Reduces code duplication
+// ============================================================================
+
+/**
+ * Create a success response
+ */
+function createSuccessResponse<T>(req: BaseRequest, data?: T, startTime?: number): Response {
+  return {
+    id: req.id,
+    success: true,
+    timestamp: Date.now(),
+    duration: startTime ? Date.now() - startTime : 0,
+    data,
+  };
+}
+
+/**
+ * Create an error response
+ */
+function createErrorResponse(
+  req: BaseRequest,
+  code: ErrorCode,
+  message: string,
+  startTime?: number
+): Response {
+  return {
+    id: req.id,
+    success: false,
+    timestamp: Date.now(),
+    duration: startTime ? Date.now() - startTime : 0,
+    error: { code, message },
+  };
+}
+
+/**
+ * Create a browser not connected response
+ */
+function createBrowserNotConnectedResponse(req: BaseRequest): Response {
+  return createErrorResponse(req, 'BROWSER_NOT_CONNECTED' as ErrorCode, 'Browser not connected');
+}
+
 /**
  * Create navigate handler
  */
 export function createNavigateHandler(ctx: HandlerContext) {
   return async (request: Request): Promise<Response> => {
     const req = request as NavigateRequest;
+    const startTime = Date.now();
     
     try {
       const result = await ctx.browserManager.navigate(req.url, req.wait);
-      return {
-        id: req.id,
-        success: true,
-        timestamp: Date.now(),
-        duration: 0,
-        data: result,
-      };
+      return createSuccessResponse(req, result, startTime);
     } catch (err) {
       logger.error({ err, url: req.url }, 'Navigate failed');
-      return {
-        id: req.id,
-        success: false,
-        timestamp: Date.now(),
-        duration: 0,
-        error: {
-          code: 'NAVIGATION_FAILED' as ErrorCode,
-          message: err instanceof Error ? err.message : 'Navigation failed',
-        },
-      };
+      return createErrorResponse(
+        req,
+        'NAVIGATION_FAILED' as ErrorCode,
+        err instanceof Error ? err.message : 'Navigation failed',
+        startTime
+      );
     }
   };
 }
@@ -73,37 +107,21 @@ export function createClickHandler(ctx: HandlerContext) {
     const page = ctx.browserManager.getPage();
     
     if (!page) {
-      return {
-        id: req.id,
-        success: false,
-        timestamp: Date.now(),
-        duration: 0,
-        error: { code: 'BROWSER_NOT_CONNECTED' as ErrorCode, message: 'Browser not connected' },
-      };
+      return createBrowserNotConnectedResponse(req);
     }
     
     try {
       const locator = getLocator(page, req.selector);
       await locator.click(req.options);
       
-      return {
-        id: req.id,
-        success: true,
-        timestamp: Date.now(),
-        duration: 0,
-      };
+      return createSuccessResponse(req);
     } catch (err) {
       logger.error({ err, selector: req.selector }, 'Click failed');
-      return {
-        id: req.id,
-        success: false,
-        timestamp: Date.now(),
-        duration: 0,
-        error: {
-          code: 'ELEMENT_NOT_FOUND' as ErrorCode,
-          message: err instanceof Error ? err.message : 'Element not found',
-        },
-      };
+      return createErrorResponse(
+        req,
+        'ELEMENT_NOT_FOUND' as ErrorCode,
+        err instanceof Error ? err.message : 'Element not found'
+      );
     }
   };
 }
@@ -117,37 +135,21 @@ export function createTypeHandler(ctx: HandlerContext) {
     const page = ctx.browserManager.getPage();
     
     if (!page) {
-      return {
-        id: req.id,
-        success: false,
-        timestamp: Date.now(),
-        duration: 0,
-        error: { code: 'BROWSER_NOT_CONNECTED' as ErrorCode, message: 'Browser not connected' },
-      };
+      return createBrowserNotConnectedResponse(req);
     }
     
     try {
       const locator = getLocator(page, req.selector);
       await locator.fill(req.text);
       
-      return {
-        id: req.id,
-        success: true,
-        timestamp: Date.now(),
-        duration: 0,
-      };
+      return createSuccessResponse(req);
     } catch (err) {
       logger.error({ err, selector: req.selector }, 'Type failed');
-      return {
-        id: req.id,
-        success: false,
-        timestamp: Date.now(),
-        duration: 0,
-        error: {
-          code: 'ELEMENT_NOT_FOUND' as ErrorCode,
-          message: err instanceof Error ? err.message : 'Element not found',
-        },
-      };
+      return createErrorResponse(
+        req,
+        'ELEMENT_NOT_FOUND' as ErrorCode,
+        err instanceof Error ? err.message : 'Element not found'
+      );
     }
   };
 }
@@ -161,13 +163,7 @@ export function createWaitHandler(ctx: HandlerContext) {
     const page = ctx.browserManager.getPage();
     
     if (!page) {
-      return {
-        id: req.id,
-        success: false,
-        timestamp: Date.now(),
-        duration: 0,
-        error: { code: 'BROWSER_NOT_CONNECTED' as ErrorCode, message: 'Browser not connected' },
-      };
+      return createBrowserNotConnectedResponse(req);
     }
     
     const _waitForVisible = async (page: Page, selector: string, timeout: number): Promise<void> => {
@@ -215,24 +211,14 @@ export function createWaitHandler(ctx: HandlerContext) {
         await _waitForEnabled(page, sel, to);
       }
       
-      return {
-        id: req.id,
-        success: true,
-        timestamp: Date.now(),
-        duration: 0,
-      };
+      return createSuccessResponse(req);
     } catch (err) {
       logger.error({ err, wait: req.wait }, 'Wait failed');
-      return {
-        id: req.id,
-        success: false,
-        timestamp: Date.now(),
-        duration: 0,
-        error: {
-          code: 'TIMEOUT' as ErrorCode,
-          message: err instanceof Error ? err.message : 'Wait timeout',
-        },
-      };
+      return createErrorResponse(
+        req,
+        'TIMEOUT' as ErrorCode,
+        err instanceof Error ? err.message : 'Wait timeout'
+      );
     }
   };
 }
@@ -244,15 +230,10 @@ export function createScreenshotHandler(ctx: HandlerContext) {
   return async (request: Request): Promise<Response> => {
     const req = request as ScreenshotRequest;
     const page = ctx.browserManager.getPage();
+    const startTime = Date.now();
     
     if (!page) {
-      return {
-        id: req.id,
-        success: false,
-        timestamp: Date.now(),
-        duration: 0,
-        error: { code: 'BROWSER_NOT_CONNECTED' as ErrorCode, message: 'Browser not connected' },
-      };
+      return createBrowserNotConnectedResponse(req);
     }
     
     try {
@@ -274,28 +255,18 @@ export function createScreenshotHandler(ctx: HandlerContext) {
         });
       }
       
-      return {
-        id: req.id,
-        success: true,
-        timestamp: Date.now(),
-        duration: 0,
-        data: {
-          base64: screenshot.toString('base64'),
-          type: req.type ?? 'png',
-        },
-      };
+      return createSuccessResponse(req, {
+        base64: screenshot.toString('base64'),
+        type: req.type ?? 'png',
+      }, startTime);
     } catch (err) {
       logger.error({ err }, 'Screenshot failed');
-      return {
-        id: req.id,
-        success: false,
-        timestamp: Date.now(),
-        duration: 0,
-        error: {
-          code: 'INTERNAL_ERROR' as ErrorCode,
-          message: err instanceof Error ? err.message : 'Screenshot failed',
-        },
-      };
+      return createErrorResponse(
+        req,
+        'INTERNAL_ERROR' as ErrorCode,
+        err instanceof Error ? err.message : 'Screenshot failed',
+        startTime
+      );
     }
   };
 }
@@ -307,15 +278,10 @@ export function createAuthSaveHandler(ctx: HandlerContext) {
   return async (request: Request): Promise<Response> => {
     const req = request as AuthSaveRequest;
     const context = ctx.browserManager.getContext();
+    const startTime = Date.now();
     
     if (!context) {
-      return {
-        id: req.id,
-        success: false,
-        timestamp: Date.now(),
-        duration: 0,
-        error: { code: 'BROWSER_NOT_CONNECTED' as ErrorCode, message: 'Browser not connected' },
-      };
+      return createBrowserNotConnectedResponse(req);
     }
     
     try {
@@ -324,28 +290,18 @@ export function createAuthSaveHandler(ctx: HandlerContext) {
       
       await ctx.sessionManager.saveSession(req.profileName, cookies, undefined, domain);
       
-      return {
-        id: req.id,
-        success: true,
-        timestamp: Date.now(),
-        duration: 0,
-        data: {
-          profileName: req.profileName,
-          cookiesCount: cookies.length,
-        },
-      };
+      return createSuccessResponse(req, {
+        profileName: req.profileName,
+        cookiesCount: cookies.length,
+      }, startTime);
     } catch (err) {
       logger.error({ err, profileName: req.profileName }, 'Auth save failed');
-      return {
-        id: req.id,
-        success: false,
-        timestamp: Date.now(),
-        duration: 0,
-        error: {
-          code: 'SESSION_SAVE_FAILED' as ErrorCode,
-          message: err instanceof Error ? err.message : 'Failed to save session',
-        },
-      };
+      return createErrorResponse(
+        req,
+        'SESSION_SAVE_FAILED' as ErrorCode,
+        err instanceof Error ? err.message : 'Failed to save session',
+        startTime
+      );
     }
   };
 }
@@ -357,15 +313,10 @@ export function createAuthRestoreHandler(ctx: HandlerContext) {
   return async (request: Request): Promise<Response> => {
     const req = request as AuthRestoreRequest;
     const context = ctx.browserManager.getContext();
+    const startTime = Date.now();
     
     if (!context) {
-      return {
-        id: req.id,
-        success: false,
-        timestamp: Date.now(),
-        duration: 0,
-        error: { code: 'BROWSER_NOT_CONNECTED' as ErrorCode, message: 'Browser not connected' },
-      };
+      return createBrowserNotConnectedResponse(req);
     }
     
     try {
@@ -387,28 +338,18 @@ await page.evaluate((storageData) => {
         }
       }
       
-      return {
-        id: req.id,
-        success: true,
-        timestamp: Date.now(),
-        duration: 0,
-        data: {
-          profileName: req.profileName,
-          restored: true,
-        },
-      };
+      return createSuccessResponse(req, {
+        profileName: req.profileName,
+        restored: true,
+      }, startTime);
     } catch (err) {
       logger.error({ err, profileName: req.profileName }, 'Auth restore failed');
-      return {
-        id: req.id,
-        success: false,
-        timestamp: Date.now(),
-        duration: 0,
-        error: {
-          code: 'SESSION_RESTORE_FAILED' as ErrorCode,
-          message: err instanceof Error ? err.message : 'Failed to restore session',
-        },
-      };
+      return createErrorResponse(
+        req,
+        'SESSION_RESTORE_FAILED' as ErrorCode,
+        err instanceof Error ? err.message : 'Failed to restore session',
+        startTime
+      );
     }
   };
 }
@@ -419,34 +360,25 @@ await page.evaluate((storageData) => {
 export function createGetStateHandler(ctx: HandlerContext) {
   return async (request: Request): Promise<Response> => {
     const req = request as GetStateRequest;
+    const startTime = Date.now();
     
     try {
       const state = await ctx.browserManager.getState();
       
-      return {
-        id: req.id,
-        success: true,
-        timestamp: Date.now(),
-        duration: 0,
-        data: {
-          url: state.url,
-          title: state.title,
-          cookies: state.cookiesCount,
-          isConnected: state.isConnected,
-        },
-      };
+      return createSuccessResponse(req, {
+        url: state.url,
+        title: state.title,
+        cookies: state.cookiesCount,
+        isConnected: state.isConnected,
+      }, startTime);
     } catch (err) {
       logger.error({ err }, 'Get state failed');
-      return {
-        id: req.id,
-        success: false,
-        timestamp: Date.now(),
-        duration: 0,
-        error: {
-          code: 'INTERNAL_ERROR' as ErrorCode,
-          message: err instanceof Error ? err.message : 'Failed to get state',
-        },
-      };
+      return createErrorResponse(
+        req,
+        'INTERNAL_ERROR' as ErrorCode,
+        err instanceof Error ? err.message : 'Failed to get state',
+        startTime
+      );
     }
   };
 }
@@ -457,28 +389,20 @@ export function createGetStateHandler(ctx: HandlerContext) {
 export function createCloseHandler(ctx: HandlerContext) {
   return async (request: Request): Promise<Response> => {
     const req = request as CloseRequest;
+    const startTime = Date.now();
     
     try {
       await ctx.browserManager.close();
       
-      return {
-        id: req.id,
-        success: true,
-        timestamp: Date.now(),
-        duration: 0,
-      };
+      return createSuccessResponse(req, undefined, startTime);
     } catch (err) {
       logger.error({ err }, 'Close failed');
-      return {
-        id: req.id,
-        success: false,
-        timestamp: Date.now(),
-        duration: 0,
-        error: {
-          code: 'INTERNAL_ERROR' as ErrorCode,
-          message: err instanceof Error ? err.message : 'Failed to close browser',
-        },
-      };
+      return createErrorResponse(
+        req,
+        'INTERNAL_ERROR' as ErrorCode,
+        err instanceof Error ? err.message : 'Failed to close browser',
+        startTime
+      );
     }
   };
 }

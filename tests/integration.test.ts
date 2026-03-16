@@ -57,6 +57,10 @@ jest.mock('crypto', () => {
     }),
     randomBytes: (size: number) => Buffer.alloc(size, 0xab), // Fixed IV
     randomUUID: () => 'fixed-uuid-for-testing',
+    // Mock PBKDF2 for key derivation - returns a fixed 32-byte key
+    pbkdf2Sync: (_password: string | Buffer, _salt: Buffer, _iterations: number, keylen: number, _digest: string) => {
+      return Buffer.alloc(keylen, 0x42); // Fixed key for testing
+    },
     createCipheriv: (_algorithm: string, _key: Buffer, _iv: Buffer) => ({
       update: (data: any) => {
         // Capture plaintext for two sequential encryptions (cookies, then localStorage)
