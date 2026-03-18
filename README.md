@@ -305,6 +305,110 @@ console.log(state);
 await client.close();
 ```
 
+### 悬停元素
+
+```typescript
+await client.hover({ css: '#menu-item' });
+```
+
+### 批量填写表单
+
+```typescript
+await client.fillForm([
+  { selector: { css: '#name' }, value: '张三' },
+  { selector: { css: '#email' }, value: 'zhang@example.com' },
+]);
+```
+
+### 提交表单
+
+```typescript
+await client.submit({ css: '#login-form' });
+```
+
+### 智能操作
+
+```typescript
+// 智能点击 - 尝试多个选择器直到成功
+await client.smartClick([
+  { css: '#submit-btn' },
+  { role: 'button' },
+  { text: '提交' },
+]);
+
+// 智能输入 - 尝试多个选择器直到成功
+await client.smartType([
+  { css: '#username' },
+  { label: '用户名' },
+], 'user@example.com');
+
+// 重试操作
+const result = await client.retry(async () => {
+  return await client.click({ css: '#dynamic-button' });
+}, 3, 1000);
+```
+
+### 调试工具
+
+```typescript
+// 启用调试模式
+client.enableDebug();
+
+// 调试截图
+const screenshot = await client.debugScreenshot('before-action');
+
+// 获取调试状态
+const state = await client.debugState();
+
+// 禁用调试模式
+client.disableDebug();
+```
+
+### 元素发现
+
+```typescript
+// 发现页面上所有可交互元素
+const result = await client.discover();
+
+// 过滤特定类型的元素
+const inputsAndButtons = await client.discover(['input', 'button']);
+
+// 结果包含:
+console.log(result.data.elements);     // 所有元素
+console.log(result.data.loginFields); // 检测到的登录字段
+```
+
+### 智能登录
+
+```typescript
+// 自动检测登录字段并登录
+const result = await client.smartLogin({
+  username: 'user@example.com',
+  password: 'password123',
+});
+
+// 或者先导航到登录页面
+await client.smartLogin({
+  username: 'user@example.com',
+  password: 'password123',
+}, 'https://example.com/login');
+```
+
+### AI 自动化
+
+```typescript
+// 发现元素供 AI 决策下一步操作
+const result = await client.autoPerform(
+  '登录并进入设置页面',
+  { username: 'user@example.com', password: 'pass123' },
+  'https://example.com'
+);
+
+// 结果包含发现的元素和登录字段
+console.log(result.data.elements);     // 供 AI 使用的元素列表
+console.log(result.data.loginFields);  // 登录字段信息
+```
+
 ---
 
 ## 使用示例

@@ -22,7 +22,13 @@ export type OperationType =
   | 'auth_save'
   | 'auth_restore'
   | 'close'
-  | 'get_state';
+  | 'get_state'
+  | 'hover'
+  | 'fill_form'
+  | 'submit'
+  | 'discover'
+  | 'smart_login'
+  | 'auto_perform';
 
 /**
  * Wait strategy options for SPA and dynamic content
@@ -186,6 +192,113 @@ export interface CloseRequest extends BaseRequest {
 }
 
 /**
+ * Hover request
+ */
+export interface HoverRequest extends BaseRequest {
+  operation: 'hover';
+  /** Element selector */
+  selector: SelectorOptions;
+}
+
+/**
+ * Fill form request - fill multiple fields at once
+ */
+export interface FillFormRequest extends BaseRequest {
+  operation: 'fill_form';
+  /** Array of field definitions */
+  fields: Array<{
+    selector: SelectorOptions;
+    value: string;
+  }>;
+}
+
+/**
+ * Submit form request
+ */
+export interface SubmitRequest extends BaseRequest {
+  operation: 'submit';
+  /** Form selector (optional, defaults to first form on page) */
+  selector?: SelectorOptions;
+}
+
+/**
+ * Discover elements request - find all interactive elements on page
+ */
+export interface DiscoverRequest extends BaseRequest {
+  operation: 'discover';
+  /** Filter by element types (input, button, link, etc.) */
+  types?: Array<'input' | 'button' | 'link' | 'select' | 'checkbox' | 'radio'>;
+}
+
+/**
+ * Smart login request - auto-detect login fields and login
+ */
+export interface SmartLoginRequest extends BaseRequest {
+  operation: 'smart_login';
+  /** Username or email */
+  username: string;
+  /** Password */
+  password: string;
+  /** Optional URL to navigate to first */
+  url?: string;
+}
+
+/**
+ * Auto perform request - AI-driven automation
+ */
+export interface AutoPerformRequest extends BaseRequest {
+  operation: 'auto_perform';
+  /** Goal description in natural language */
+  goal: string;
+  /** Additional context like credentials */
+  context?: Record<string, string>;
+  /** Optional URL to navigate to first */
+  url?: string;
+}
+
+// ============================================================================
+// Element Types
+// ============================================================================
+
+/**
+ * Discovered element on page
+ */
+export interface DiscoveredElement {
+  /** Element type */
+  type: 'input' | 'button' | 'link' | 'select' | 'checkbox' | 'radio' | 'form';
+  /** Human-readable label (from aria-label, label, placeholder, or text) */
+  label?: string;
+  /** The selector to use */
+  selector: SelectorOptions;
+  /** Element's name attribute */
+  name?: string;
+  /** Element's id */
+  id?: string;
+  /** Input type (for input elements) */
+  inputType?: string;
+  /** Is the element visible */
+  visible: boolean;
+  /** Is the element enabled */
+  enabled: boolean;
+  /** Parent form ID (if inside a form) */
+  formId?: string;
+}
+
+/**
+ * Login fields detected on page
+ */
+export interface LoginFields {
+  /** Username/email input */
+  username?: DiscoveredElement;
+  /** Password input */
+  password?: DiscoveredElement;
+  /** Submit button */
+  submitButton?: DiscoveredElement;
+  /** Remember me checkbox */
+  rememberMe?: DiscoveredElement;
+}
+
+/**
  * Union type of all request types
  */
 export type Request =
@@ -197,7 +310,13 @@ export type Request =
   | AuthSaveRequest
   | AuthRestoreRequest
   | GetStateRequest
-  | CloseRequest;
+  | CloseRequest
+  | HoverRequest
+  | FillFormRequest
+  | SubmitRequest
+  | DiscoverRequest
+  | SmartLoginRequest
+  | AutoPerformRequest;
 
 // ============================================================================
 // Response Types
@@ -311,6 +430,72 @@ export interface GetStateResponse extends BaseResponse {
 }
 
 /**
+ * Hover response
+ */
+export interface HoverResponse extends BaseResponse {
+  success: boolean;
+}
+
+/**
+ * Fill form response
+ */
+export interface FillFormResponse extends BaseResponse {
+  success: boolean;
+  data?: {
+    filledCount: number;
+  };
+}
+
+/**
+ * Submit form response
+ */
+export interface SubmitResponse extends BaseResponse {
+  success: boolean;
+}
+
+/**
+ * Discover elements response
+ */
+export interface DiscoverResponse extends BaseResponse {
+  success: boolean;
+  data?: {
+    /** All discovered elements */
+    elements: DiscoveredElement[];
+    /** Detected login fields (if any) */
+    loginFields?: LoginFields;
+  };
+}
+
+/**
+ * Smart login response
+ */
+export interface SmartLoginResponse extends BaseResponse {
+  success: boolean;
+  data?: {
+    loggedIn: boolean;
+    currentUrl?: string;
+    error?: string;
+  };
+}
+
+/**
+ * Auto perform response
+ */
+export interface AutoPerformResponse extends BaseResponse {
+  success: boolean;
+  data?: {
+    completed: boolean;
+    steps: Array<{
+      action: string;
+      selector?: SelectorOptions;
+      success: boolean;
+      error?: string;
+    }>;
+    finalUrl?: string;
+  };
+}
+
+/**
  * Union type of all response types
  */
 export type Response =
@@ -322,7 +507,13 @@ export type Response =
   | ScreenshotResponse
   | AuthSaveResponse
   | AuthRestoreResponse
-  | GetStateResponse;
+  | GetStateResponse
+  | HoverResponse
+  | FillFormResponse
+  | SubmitResponse
+  | DiscoverResponse
+  | SmartLoginResponse
+  | AutoPerformResponse;
 
 // ============================================================================
 // Session Types
@@ -427,6 +618,7 @@ export enum ErrorCode {
   NAVIGATION_FAILED = 'NAVIGATION_FAILED',
   ELEMENT_NOT_FOUND = 'ELEMENT_NOT_FOUND',
   ELEMENT_NOT_VISIBLE = 'ELEMENT_NOT_VISIBLE',
+  ELEMENT_NOT_ENABLED = 'ELEMENT_NOT_ENABLED',
   TIMEOUT = 'TIMEOUT',
   
   // Session errors
@@ -440,3 +632,25 @@ export enum ErrorCode {
   RESOURCE_EXHAUSTED = 'RESOURCE_EXHAUSTED',
   ENCRYPTION_ERROR = 'ENCRYPTION_ERROR',
 }
+
+/**
+ * Error message templates for better developer experience
+ */
+export const ErrorMessages: Record<ErrorCode, string> = {
+  [ErrorCode.INVALID_REQUEST]: 'Invalid request format or parameters',
+  [ErrorCode.UNKNOWN_OPERATION]: 'Unknown operation requested',
+  [ErrorCode.MISSING_PARAMETER]: 'Required parameter is missing',
+  [ErrorCode.BROWSER_NOT_CONNECTED]: 'Browser is not connected. Please initialize the browser first.',
+  [ErrorCode.NAVIGATION_FAILED]: 'Failed to navigate to the requested URL',
+  [ErrorCode.ELEMENT_NOT_FOUND]: 'Could not find element with the specified selector',
+  [ErrorCode.ELEMENT_NOT_VISIBLE]: 'Element exists but is not visible',
+  [ErrorCode.ELEMENT_NOT_ENABLED]: 'Element exists but is not enabled (may be disabled)',
+  [ErrorCode.TIMEOUT]: 'Operation timed out',
+  [ErrorCode.SESSION_NOT_FOUND]: 'Session not found. It may have been deleted or expired.',
+  [ErrorCode.SESSION_EXPIRED]: 'Session has expired. Please save a new session.',
+  [ErrorCode.SESSION_SAVE_FAILED]: 'Failed to save session data',
+  [ErrorCode.SESSION_RESTORE_FAILED]: 'Failed to restore session data',
+  [ErrorCode.INTERNAL_ERROR]: 'An internal error occurred',
+  [ErrorCode.RESOURCE_EXHAUSTED]: 'System resources exhausted (memory, CPU, etc.)',
+  [ErrorCode.ENCRYPTION_ERROR]: 'Encryption/decryption failed',
+};

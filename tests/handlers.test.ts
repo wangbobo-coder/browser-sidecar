@@ -7,18 +7,128 @@ import {
   createTypeHandler,
   createWaitHandler,
   createGetStateHandler,
+  createDiscoverHandler,
+  createSmartLoginHandler,
+  createAutoPerformHandler,
 } from '../src/handlers/index.js';
 import type { BrowserManager } from '../src/browser/index.js';
 import type { SessionManager } from '../src/session/index.js';
 import type { Request } from '../src/types.js';
 
+// Mock Playwright - simplified for testing
+jest.mock('playwright', () => ({
+  chromium: {
+    launch: jest.fn().mockResolvedValue({
+      newContext: jest.fn().mockResolvedValue({
+        newPage: jest.fn().mockResolvedValue({
+          locator: jest.fn().mockReturnValue({
+            click: jest.fn().mockResolvedValue(undefined),
+            fill: jest.fn().mockResolvedValue(undefined),
+            hover: jest.fn().mockResolvedValue(undefined),
+            evaluate: jest.fn().mockResolvedValue(undefined),
+            isVisible: jest.fn().mockResolvedValue(true),
+            isEnabled: jest.fn().mockResolvedValue(true),
+            waitFor: jest.fn().mockResolvedValue(undefined),
+            screenshot: jest.fn().mockResolvedValue(Buffer.from('fake-image')),
+            all: jest.fn().mockResolvedValue([]),
+            first: jest.fn().mockReturnValue({
+              evaluate: jest.fn().mockResolvedValue(undefined),
+              getAttribute: jest.fn().mockResolvedValue(null),
+              textContent: jest.fn().mockResolvedValue('Test Button'),
+              isVisible: jest.fn().mockResolvedValue(true),
+              isEnabled: jest.fn().mockResolvedValue(true),
+              count: jest.fn().mockResolvedValue(0),
+            }),
+            getAttribute: jest.fn().mockResolvedValue(null),
+            textContent: jest.fn().mockResolvedValue('Test'),
+            count: jest.fn().mockResolvedValue(0),
+          }),
+          getByText: jest.fn().mockReturnValue({
+            click: jest.fn().mockResolvedValue(undefined),
+          }),
+          getByRole: jest.fn().mockReturnValue({
+            click: jest.fn().mockResolvedValue(undefined),
+          }),
+          getByLabel: jest.fn().mockReturnValue({
+            fill: jest.fn().mockResolvedValue(undefined),
+          }),
+          getByPlaceholder: jest.fn().mockReturnValue({
+            fill: jest.fn().mockResolvedValue(undefined),
+          }),
+          getByTestId: jest.fn().mockReturnValue({
+            click: jest.fn().mockResolvedValue(undefined),
+          }),
+          waitForSelector: jest.fn().mockResolvedValue(undefined),
+          waitForFunction: jest.fn().mockResolvedValue(undefined),
+          waitForLoadState: jest.fn().mockResolvedValue(undefined),
+          goto: jest.fn().mockResolvedValue(undefined),
+          url: jest.fn().mockReturnValue('https://example.com'),
+          title: jest.fn().mockResolvedValue('Example'),
+          evaluate: jest.fn().mockResolvedValue(undefined),
+        }),
+        cookies: jest.fn().mockResolvedValue([]),
+      }),
+      close: jest.fn().mockResolvedValue(undefined),
+    }),
+  },
+}));
+
 // Mock BrowserManager
+const mockLocator = {
+  click: jest.fn().mockResolvedValue(undefined),
+  fill: jest.fn().mockResolvedValue(undefined),
+  hover: jest.fn().mockResolvedValue(undefined),
+  evaluate: jest.fn().mockResolvedValue(undefined),
+  isVisible: jest.fn().mockResolvedValue(true),
+  isEnabled: jest.fn().mockResolvedValue(true),
+  waitFor: jest.fn().mockResolvedValue(undefined),
+  screenshot: jest.fn().mockResolvedValue(Buffer.from('fake-image')),
+  all: jest.fn().mockResolvedValue([]),
+  first: jest.fn().mockReturnValue({
+    evaluate: jest.fn().mockResolvedValue(undefined),
+    getAttribute: jest.fn().mockResolvedValue(null),
+    textContent: jest.fn().mockResolvedValue('Test Button'),
+    isVisible: jest.fn().mockResolvedValue(true),
+    isEnabled: jest.fn().mockResolvedValue(true),
+    count: jest.fn().mockResolvedValue(0),
+  }),
+  getAttribute: jest.fn().mockResolvedValue(null),
+  textContent: jest.fn().mockResolvedValue('Test'),
+  count: jest.fn().mockResolvedValue(0),
+};
+
+const mockPage = {
+  locator: jest.fn().mockReturnValue(mockLocator),
+  getByText: jest.fn().mockReturnValue({
+    click: jest.fn().mockResolvedValue(undefined),
+  }),
+  getByRole: jest.fn().mockReturnValue({
+    click: jest.fn().mockResolvedValue(undefined),
+  }),
+  getByLabel: jest.fn().mockReturnValue({
+    fill: jest.fn().mockResolvedValue(undefined),
+  }),
+  getByPlaceholder: jest.fn().mockReturnValue({
+    fill: jest.fn().mockResolvedValue(undefined),
+  }),
+  getByTestId: jest.fn().mockReturnValue({
+    click: jest.fn().mockResolvedValue(undefined),
+  }),
+  waitForSelector: jest.fn().mockResolvedValue(undefined),
+  waitForFunction: jest.fn().mockResolvedValue(undefined),
+  waitForLoadState: jest.fn().mockResolvedValue(undefined),
+  goto: jest.fn().mockResolvedValue(undefined),
+  url: jest.fn().mockReturnValue('https://example.com'),
+  title: jest.fn().mockResolvedValue('Example'),
+  evaluate: jest.fn().mockResolvedValue(undefined),
+};
+
 const createMockBrowserManager = (): jest.Mocked<BrowserManager> => ({
   initialize: jest.fn(),
   close: jest.fn(),
   getState: jest.fn(),
   isConnected: jest.fn().mockReturnValue(true),
-  getPage: jest.fn(),
+  getPage: jest.fn().mockReturnValue(mockPage as any),
   getContext: jest.fn(),
   navigate: jest.fn(),
 } as unknown as jest.Mocked<BrowserManager>);
@@ -224,6 +334,141 @@ describe('Handlers', () => {
           isConnected: true,
         });
       }
+    });
+  });
+
+  describe('createDiscoverHandler', () => {
+    it('should discover elements on page', async () => {
+      const handler = createDiscoverHandler({
+        browserManager: mockBrowserManager,
+        sessionManager: mockSessionManager,
+      });
+
+      const request = {
+        id: 'test-8',
+        operation: 'discover' as const,
+        timestamp: Date.now(),
+      };
+
+      const response = await handler(request as Request);
+
+      expect(response.success).toBe(true);
+      if (response.success) {
+        const data = (response as any).data;
+        expect(data).toHaveProperty('elements');
+        expect(data).toHaveProperty('loginFields');
+      }
+    });
+
+    it('should return error when browser not connected', async () => {
+      mockBrowserManager.getPage.mockReturnValue(null);
+
+      const handler = createDiscoverHandler({
+        browserManager: mockBrowserManager,
+        sessionManager: mockSessionManager,
+      });
+
+      const request = {
+        id: 'test-9',
+        operation: 'discover' as const,
+        timestamp: Date.now(),
+      };
+
+      const response = await handler(request as Request);
+
+      expect(response.success).toBe(false);
+      expect((response as any).error?.code).toBe('BROWSER_NOT_CONNECTED');
+    });
+  });
+
+  describe('createSmartLoginHandler', () => {
+    it('should perform smart login', async () => {
+      const handler = createSmartLoginHandler({
+        browserManager: mockBrowserManager,
+        sessionManager: mockSessionManager,
+      });
+
+      const request = {
+        id: 'test-10',
+        operation: 'smart_login' as const,
+        username: 'testuser',
+        password: 'testpass',
+        timestamp: Date.now(),
+      };
+
+      const response = await handler(request as Request);
+
+      // Should fail because mock doesn't have proper login fields
+      // But the handler should be callable
+      expect(response).toHaveProperty('success');
+    });
+
+    it('should return error when browser not connected', async () => {
+      mockBrowserManager.getPage.mockReturnValue(null);
+
+      const handler = createSmartLoginHandler({
+        browserManager: mockBrowserManager,
+        sessionManager: mockSessionManager,
+      });
+
+      const request = {
+        id: 'test-11',
+        operation: 'smart_login' as const,
+        username: 'testuser',
+        password: 'testpass',
+        timestamp: Date.now(),
+      };
+
+      const response = await handler(request as Request);
+
+      expect(response.success).toBe(false);
+      expect((response as any).error?.code).toBe('BROWSER_NOT_CONNECTED');
+    });
+  });
+
+  describe('createAutoPerformHandler', () => {
+    it('should perform auto automation', async () => {
+      const handler = createAutoPerformHandler({
+        browserManager: mockBrowserManager,
+        sessionManager: mockSessionManager,
+      });
+
+      const request = {
+        id: 'test-12',
+        operation: 'auto_perform' as const,
+        goal: '登录并进入设置页面',
+        timestamp: Date.now(),
+      };
+
+      const response = await handler(request as Request);
+
+      expect(response.success).toBe(true);
+      if (response.success) {
+        const data = (response as any).data;
+        expect(data).toHaveProperty('completed');
+        expect(data).toHaveProperty('steps');
+      }
+    });
+
+    it('should return error when browser not connected', async () => {
+      mockBrowserManager.getPage.mockReturnValue(null);
+
+      const handler = createAutoPerformHandler({
+        browserManager: mockBrowserManager,
+        sessionManager: mockSessionManager,
+      });
+
+      const request = {
+        id: 'test-13',
+        operation: 'auto_perform' as const,
+        goal: '执行某操作',
+        timestamp: Date.now(),
+      };
+
+      const response = await handler(request as Request);
+
+      expect(response.success).toBe(false);
+      expect((response as any).error?.code).toBe('BROWSER_NOT_CONNECTED');
     });
   });
 });

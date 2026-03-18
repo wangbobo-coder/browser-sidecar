@@ -1,6 +1,6 @@
 {
   "name": "@oh-agent/browser-sidecar",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Kubernetes Sidecar browser automation tool for OpenClaw",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

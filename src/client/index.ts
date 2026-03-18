@@ -52,6 +52,8 @@ export interface ClientConfig {
   autoReconnect?: boolean;
   /** Max reconnect attempts (default: 3) */
   maxReconnectAttempts?: number;
+  /** Auto connect on first operation (default: true) */
+  autoConnect?: boolean;
 }
 
 /**
@@ -154,6 +156,7 @@ export class BrowserSidecarClient {
       requestTimeout: config.requestTimeout ?? 30000,
       autoReconnect: config.autoReconnect ?? true,
       maxReconnectAttempts: config.maxReconnectAttempts ?? 3,
+      autoConnect: config.autoConnect ?? true,
     };
   }
 
@@ -265,6 +268,27 @@ export class BrowserSidecarClient {
     }
   }
 
+  // Create more specific error types based on error code
+  private createError(errorCode: string, errorMessage: string, errorDetails?: unknown): Error {
+    switch (errorCode) {
+      case 'ELEMENT_NOT_FOUND':
+        return new Error(errorMessage);
+      case 'ELEMENT_NOT_VISIBLE':
+        return new Error(errorMessage);
+      case 'NAVIGATION_FAILED':
+        return new Error(errorMessage);
+      case 'SESSION_NOT_FOUND':
+      case 'SESSION_EXPIRED':
+      case 'SESSION_SAVE_FAILED':
+      case 'SESSION_RESTORE_FAILED':
+        return new Error(errorMessage);
+      case 'TIMEOUT':
+        return new TimeoutError(errorMessage, errorDetails);
+      default:
+        return new RequestError(errorMessage, errorCode, errorDetails);
+    }
+  }
+
   /**
    * Handle a complete message
    */
@@ -281,13 +305,12 @@ export class BrowserSidecarClient {
           pending.resolve(response);
         } else {
           const errorResponse = response as { error: { code: string; message: string; details?: unknown } };
-          pending.reject(
-            new RequestError(
-              errorResponse.error.message,
-              errorResponse.error.code,
-              errorResponse.error.details
-            )
+          const error = this.createError(
+            errorResponse.error.code,
+            errorResponse.error.message,
+            errorResponse.error.details
           );
+          pending.reject(error);
         }
       }
     } catch {
@@ -661,6 +684,259 @@ export class BrowserSidecarClient {
   ): Promise<TypeResponse> {
     return this.type({ placeholder }, text, options);
   }
+
+  /**
+   * Hover over an element
+   *
+   * @param selector - Element selector options
+   * @returns Base response
+   */
+  async hover(selector: SelectorOptions): Promise<BaseResponse> {
+    const request: Omit<{ operation: 'hover'; selector: SelectorOptions } & Request, 'id' | 'timestamp'> = {
+      operation: 'hover',
+      selector,
+    };
+
+    return this.sendRequest<BaseResponse>(request);
+  }
+
+  /**
+   * Fill multiple form fields at once
+   *
+   * @param fields - Array of field definitions with selector and value
+   * @returns Fill form response with filled count
+   */
+  async fillForm(
+    fields: Array<{ selector: SelectorOptions; value: string }>
+  ): Promise<BaseResponse> {
+    const request: Omit<{ operation: 'fill_form'; fields: Array<{ selector: SelectorOptions; value: string }> } & Request, 'id' | 'timestamp'> = {
+      operation: 'fill_form',
+      fields,
+    };
+
+    return this.sendRequest<BaseResponse>(request);
+  }
+
+  /**
+   * Submit a form
+   *
+   * @param selector - Optional form selector
+   * @returns Base response
+   */
+  async submit(selector?: SelectorOptions): Promise<BaseResponse> {
+    const request: Omit<{ operation: 'submit'; selector?: SelectorOptions } & Request, 'id' | 'timestamp'> = {
+      operation: 'submit',
+      selector,
+    };
+
+    return this.sendRequest<BaseResponse>(request);
+  }
+
+  // ==========================================================================
+  // Smart Operations - Auto-retry with fallback selectors
+  // ==========================================================================
+
+  /**
+   * Smart click - tries multiple selectors until one works
+   *
+   * @param selectors - Array of selector options to try in order
+   * @param options - Click options
+   * @returns Click response
+   */
+  async smartClick(
+    selectors: SelectorOptions[],
+    options?: Parameters<typeof this.click>[1]
+  ): Promise<ClickResponse> {
+    let lastError: Error | undefined;
+    
+    for (const selector of selectors) {
+      try {
+        return await this.click(selector, options);
+      } catch (err) {
+        lastError = err as Error;
+        // Continue to next selector
+      }
+    }
+    
+    throw lastError || new Error('All selectors failed');
+  }
+
+  /**
+   * Smart type - tries multiple selectors until one works
+   *
+   * @param selectors - Array of selector options to try in order
+   * @param text - Text to type
+   * @param options - Type options
+   * @returns Type response
+   */
+  async smartType(
+    selectors: SelectorOptions[],
+    text: string,
+    options?: Parameters<typeof this.type>[2]
+  ): Promise<TypeResponse> {
+    let lastError: Error | undefined;
+    
+    for (const selector of selectors) {
+      try {
+        return await this.type(selector, text, options);
+      } catch (err) {
+        lastError = err as Error;
+        // Continue to next selector
+      }
+    }
+    
+    throw lastError || new Error('All selectors failed');
+  }
+
+  /**
+   * Retry an operation until it succeeds or max attempts reached
+   *
+   * @param operation - Operation to retry
+   * @param maxAttempts - Maximum number of attempts (default: 3)
+   * @param delayMs - Delay between attempts in milliseconds (default: 1000)
+   * @returns Result of the operation
+   */
+  async retry<T>(
+    operation: () => Promise<T>,
+    maxAttempts: number = 3,
+    delayMs: number = 1000
+  ): Promise<T> {
+    let lastError: Error | undefined;
+    
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        return await operation();
+      } catch (err) {
+        lastError = err as Error;
+        if (attempt < maxAttempts) {
+          await new Promise(resolve => setTimeout(resolve, delayMs));
+        }
+      }
+    }
+    
+    throw lastError || new Error('Operation failed after retries');
+  }
+
+  // ==========================================================================
+  // Debug Utilities
+  // ==========================================================================
+
+  /**
+   * Debug mode - enables verbose logging
+   */
+  private debugMode: boolean = false;
+
+  /**
+   * Enable debug mode
+   */
+  enableDebug(): void {
+    this.debugMode = true;
+  }
+
+  /**
+   * Disable debug mode
+   */
+  disableDebug(): void {
+    this.debugMode = false;
+  }
+
+  /**
+   * Check if debug mode is enabled
+   */
+  isDebugEnabled(): boolean {
+    return this.debugMode;
+  }
+
+  /**
+   * Take a debug screenshot with timestamp
+   *
+   * @param label - Optional label for the screenshot
+   * @returns Screenshot response
+   */
+  async debugScreenshot(label?: string): Promise<ScreenshotResponse> {
+    if (this.debugMode) {
+      console.log(`[DEBUG] Taking screenshot: ${label || 'untitled'}`);
+    }
+    return this.screenshot({ fullPage: true });
+  }
+
+  /**
+   * Get current browser state for debugging
+   *
+   * @returns Current state
+   */
+  async debugState(): Promise<GetStateResponse> {
+    if (this.debugMode) {
+      console.log('[DEBUG] Getting browser state');
+    }
+    return this.getState();
+  }
+
+  // ==========================================================================
+  // Element Discovery & Smart Automation
+  // ==========================================================================
+
+  /**
+   * Discover all interactive elements on the current page
+   *
+   * @param types - Optional filter by element types
+   * @returns Discover response with all elements and login fields
+   */
+  async discover(
+    types?: Array<'input' | 'button' | 'link' | 'select' | 'checkbox' | 'radio'>
+  ): Promise<any> {
+    const request: Omit<{ operation: 'discover'; types?: Array<'input' | 'button' | 'link' | 'select' | 'checkbox' | 'radio'> } & Request, 'id' | 'timestamp'> = {
+      operation: 'discover',
+      types,
+    };
+
+    return this.sendRequest(request);
+  }
+
+  /**
+   * Smart login - automatically detect login fields and login
+   *
+   * @param credentials - Username and password
+   * @param url - Optional URL to navigate to first
+   * @returns Login response
+   */
+  async smartLogin(
+    credentials: { username: string; password: string },
+    url?: string
+  ): Promise<any> {
+    const request: Omit<{ operation: 'smart_login'; username: string; password: string; url?: string } & Request, 'id' | 'timestamp'> = {
+      operation: 'smart_login',
+      username: credentials.username,
+      password: credentials.password,
+      url,
+    };
+
+    return this.sendRequest(request);
+  }
+
+  /**
+   * Auto perform - AI-driven automation
+   * Discovers elements and returns them for AI to decide next actions
+   *
+   * @param goal - Goal description in natural language
+   * @param context - Additional context (e.g., credentials)
+   * @param url - Optional URL to navigate to first
+   * @returns Auto perform response with discovered elements
+   */
+  async autoPerform(
+    goal: string,
+    context?: Record<string, string>,
+    url?: string
+  ): Promise<any> {
+    const request: Omit<{ operation: 'auto_perform'; goal: string; context?: Record<string, string>; url?: string } & Request, 'id' | 'timestamp'> = {
+      operation: 'auto_perform',
+      goal,
+      context,
+      url,
+    };
+
+    return this.sendRequest(request);
+  }
 }
 
 // ============================================================================
@@ -685,6 +961,9 @@ export type {
   AuthRestoreRequest,
   GetStateRequest,
   CloseRequest,
+  HoverRequest,
+  FillFormRequest,
+  SubmitRequest,
   NavigateResponse,
   ClickResponse,
   TypeResponse,
@@ -692,6 +971,9 @@ export type {
   AuthSaveResponse,
   AuthRestoreResponse,
   GetStateResponse,
+  HoverResponse,
+  FillFormResponse,
+  SubmitResponse,
   BaseResponse,
   SessionData,
   BrowserState,
